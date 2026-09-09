@@ -2,6 +2,10 @@ from urllib.parse import urlsplit, urljoin
 from bs4 import BeautifulSoup, Tag
 from typing import TypedDict
 import requests
+import asyncio
+import aiohttp
+from types import TracebackType
+
 
 
 class PageData(TypedDict):
@@ -10,6 +14,70 @@ class PageData(TypedDict):
     first_paragraph: str
     outgoing_links: list[str]
     image_urls: list[str]
+
+class AsyncCrawler:
+    base_url: str
+    base_domain:str
+    page_data:dict[str, PageData]
+    lock:asyncio.Lock
+    max_concurrency:int
+    semaphore:asyncio.Semaphore
+    session:aiohttp.ClientSession
+
+    def __init__(self, base_url:str) -> None:
+        self.base_url = base_url
+        self.base_domain = urlsplit(base_url).netloc
+        self.page_data: dict[str, PageData] = {}
+        self.lock = asyncio.Lock()
+        self.max_concurrency = 1
+        self.semaphore = asyncio.Semaphore(self.max_concurrency)
+        self.session: aiohttp.ClientSession | None = None
+
+    async def __aenter__(self):
+        self.session = aiohttp.ClientSession()
+        return self
+
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        if self.session is not None:
+            await self.session.close()
+
+    async def add_page_visit(self, normalized_url):
+        async with self.lock:
+            if normalize_url in self.page_data:
+                return False
+            else:
+                return True
+
+    async def get_html(self, url):  
+
+        if self.session is None:
+            return None
+   
+        try:
+
+            response =  requests.get(url, headers={"User-Agent": "BootCrawler/1.0"})
+        except Exception as e:
+            raise Exception(f"Network error: {e}")
+
+    
+        if response.status_code >= 400:
+            raise Exception(f"Error Status Code Returned: {response.status_code}")
+
+        content_type = response.headers.get("content-type", "")
+
+        if "text/html" not in content_type:
+            raise Exception(f"got non-HTML response: {content_type}")
+
+        return response.text
+
+
+    
 
 
 def normalize_url(url: str) -> str:
@@ -94,12 +162,53 @@ def get_html(url):
     
     if response.status_code >= 400:
         raise Exception(f"Error Status Code Returned: {response.status_code}")
+
+    content_type = response.headers.get("content-type", "")
+
+    if "text/html" not in content_type:
+        raise Exception(f"got non-HTML response: {content_type}")
+
+    return response.text
+
+def crawl_page(base_url, current_url=None, page_data=None):
+
+    if page_data == None:
+        page_data = {}
     
-    if response.headers['content-type'] != 'text/html':
-        raise Exception(f"Content-type returned not 'text/html': {r.headers['content-type']}")
+    if current_url == None:
+        current_url = base_url
 
-    print(response.text)
 
+    parsed_current_url = urlsplit(current_url)
+    parsed_base_url = urlsplit(base_url)
+
+    if parsed_current_url.netloc != parsed_current_url.netloc:
+        return
+
+    normalized_current_url = normalize_url(current_url)
+
+    if normalized_current_url in page_data:
+        return
+
+    this_page_html = ""
+    try:
+        this_page_html = get_html(current_url)
+
+    except Exception as e:
+        print(f"Received exception when trying to get html: {e}")
+
+    print(f"Html Received from {current_url}:")
+    print(this_page_html)
+
+    this_page_data = extract_page_data(this_page_html,current_url)
+
+    page_data[current_url] = this_page_data
+
+    for url in this_page_data['outgoing_links']:
+        crawl_page(base_url, url, page_data)
+    
+    
+        
 
 
 
